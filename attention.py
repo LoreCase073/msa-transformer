@@ -1,12 +1,15 @@
 import math
 from turtle import forward
 from typing import Optional
-from sympy import symmetrize
 import torch
 from torch import embedding
 from torch import narrow
 import torch.nn as nn
 import torch.nn.functional as F
+
+def symmetrize(x):
+    "Make layer symmetric in final two dimensions, used for contact prediction."
+    return x + x.transpose(-1, -2)
 
 
 class AxialTL(nn.Module):
@@ -256,7 +259,7 @@ class RowSelfAttention(nn.Module):
         self.embedding_dim = embedding_dim
         self.max_tokens = max_tokens
 
-        #d_v dimension of keys and queries
+        #d_k dimension of keys and queries
         # // is floor division
         self.d_k = self.embedding_dim // self.num_att_heads
         #TODO: capire a cosa serve scaling ---> dovrebbe essere la normalizzazione
@@ -536,7 +539,7 @@ class ColumnSelfAttention(nn.Module):
 #LAYERNORM
 
 try:
-    from .normalization import FusedLayerNorm as _FusedLayerNorm
+    from ...normalization import FusedLayerNorm as _FusedLayerNorm
 
     class LayerNorm(_FusedLayerNorm):
         @torch.jit.unused

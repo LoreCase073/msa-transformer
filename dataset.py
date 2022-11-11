@@ -11,15 +11,15 @@ TensorLike = TypeVar("TensorLike", np.ndarray, torch.Tensor)
 
 class MSADataset(Dataset):
     #quando viene inizializzato l'oggetto del dataset
-    def __init__(self, file_csv, npz, mask_prob, max_seq_len, max_pos):
+    def __init__(self, file_csv, npz, mask_prob, max_seq_len, max_pos, padding_idx, mask_idx):
         self.file_csv = pd.read_csv(file_csv)
         self.npz = npz
         self.mask_prob = mask_prob
         self.max_seq_len = max_seq_len
         self.max_pos = max_pos
 
-        self.padding_idx = 21
-        self.mask_idx = 22
+        self.padding_idx = padding_idx
+        self.mask_idx = mask_idx
 
         self.mask_transf = MaskingPad(self.mask_idx, prob = 0.2)
         self.resize_transf = ResizeMSA(self.max_seq_len, self.max_pos)
@@ -37,7 +37,11 @@ class MSADataset(Dataset):
         dist = torch.from_numpy(file['dist6d'])
         
         msa, dist = self.resize_transf(msa, dist)
-        masked, mask = self.mask_transf(msa)
+        if self.mask_idx is not None:
+            masked, mask = self.mask_transf(msa)
+        else:
+            masked = None
+            mask = None
         distance = self.binarize_transf(dist)
         
 
@@ -128,8 +132,12 @@ def collate_tens(
 
 def collate_tensors(batch):
     msa = [i['msa'] for i in batch]
-    masked = [i['masked'] for i in batch]
-    mask = [i['mask'] for i in batch]
+    if batch[0]['masked'] is not None:
+        masked = [i['masked'] for i in batch]
+        mask = [i['mask'] for i in batch]
+    else:
+        masked = None
+        mask = None
     distance = [i['distance'] for i in batch]
 
     
@@ -137,11 +145,16 @@ def collate_tensors(batch):
     
     
     msa_b = collate_tens(msa, 21)
-    masked_b = collate_tens(masked, 21)
-    mask_b = collate_tens(mask,False)
+    if batch[0]['masked'] is not None:
+        masked_b = collate_tens(masked, 21)
+        mask_b = collate_tens(mask,False)
+    else:
+        masked_b = None
+        mask_b = None
     distance_b = collate_tens(distance,0)
 
     msa_b = msa_b.int()
-    masked_b = masked_b.int()
+    if batch[0]['masked'] is not None:
+        masked_b = masked_b.int()
 
     return msa_b, masked_b, mask_b, distance_b
