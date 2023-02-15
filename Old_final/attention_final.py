@@ -202,7 +202,7 @@ class ContPredictionHead(nn.Module):
     ):
         super().__init__()
         self.in_feat = in_feat
-        #TODO:cosa sono prepend e append? eos and bos? eos = end of sentence e bos = beginning of sentence
+        #eos = end of sentence e bos = beginning of sentence
         self.prepend_bos = prepend_bos
         self.append_eos = append_eos
         if self.append_eos and eos_idx is None:
@@ -248,7 +248,7 @@ class RowSelfAttention(nn.Module):
     def __init__(self,
         embedding_dim,
         num_att_heads,
-        dropout = 0.1,
+        dropout,
         max_tokens: int =2**14,
     ):
         super().__init__()
@@ -259,17 +259,14 @@ class RowSelfAttention(nn.Module):
         self.embedding_dim = embedding_dim
         self.max_tokens = max_tokens
 
-        #d_k dimension of keys and queries
+        #d_v dimension of keys and queries
         # // is floor division
         self.d_k = self.embedding_dim // self.num_att_heads
         #TODO: capire a cosa serve scaling ---> dovrebbe essere la normalizzazione
         self.scaling = self.d_k ** -0.5
 
-        #TODO:what is this?
         self.att_shape = "hnij"
 
-
-        #TODO: sono veramente proiezioni?
         self.k_proj = nn.Linear(self.embedding_dim,self.embedding_dim)
         self.v_proj = nn.Linear(self.embedding_dim,self.embedding_dim)
         self.q_proj = nn.Linear(self.embedding_dim,self.embedding_dim)
@@ -279,7 +276,6 @@ class RowSelfAttention(nn.Module):
         self.dropout = nn.Dropout(self.dropout)
 
     
-    #TODO: a cosa serve align scaling? ---> dovrebbe essere la normalizzazione
     def align_scaling(self, q):
         n_rows = q.size(0)
         return self.scaling / math.sqrt(n_rows)
@@ -333,17 +329,15 @@ class RowSelfAttention(nn.Module):
         n_rows, n_cols, batch_size, embedding_dim = x.size()
         q = self.q_proj(x).view(n_rows, n_cols, batch_size, self.num_att_heads, self.d_k)
         k = self.k_proj(x).view(n_rows, n_cols, batch_size, self.num_att_heads, self.d_k)
-        #scaling ---> normalizzazione? TODO
+
         q *= scaling
         if padding_mask is not None:
             # Zero out any padded aligned positions - this is important since
             # we take a sum across the alignment axis.
-            q *= 1 - padding_mask.permute(1, 2, 0).unsqueeze(3).unsqueeze(4).to(q)
+            q *= (1 - padding_mask.permute(1, 2, 0).unsqueeze(3).unsqueeze(4).to(q))
 
-        #TODO: capire come funziona einsum per capire equazione calcolata
         attention_weights = torch.einsum(f"rinhd,rjnhd->hnij", q, k)
 
-        #TODO: perchè dare errore automaticamente?
         if mask is not None:
             attention_weights = attention_weights.masked_fill(
                 mask[:,0].unsqueeze(0).unsqueeze(2),
@@ -369,7 +363,7 @@ class RowSelfAttention(nn.Module):
         v = self.v_proj(x).view(n_rows, n_cols, batch_size, self.num_att_heads, self.d_k)
         c = torch.einsum(f"hnij,rjnhd->rinhd", attention_probabilities, v)
 
-        #TODO: cosa fa contiguous? Returns a contiguous in memory tensor containing the same data as self tensor. 
+        #Returns a contiguous in memory tensor containing the same data as self tensor. 
         #If self tensor is already in the specified memory format, this function returns the self tensor.
         c = c.contiguous().view(n_rows, n_cols, batch_size, embedding_dim)
         output = self.out_proj(c)
@@ -377,7 +371,6 @@ class RowSelfAttention(nn.Module):
 
 
     #forward pass of the row self attention layer
-    #TODO: riguardare come funziona tutto e comprendere meglio
     def forward(
         self,
         x,
@@ -421,11 +414,9 @@ class ColumnSelfAttention(nn.Module):
         #TODO: capire a cosa serve scaling ---> dovrebbe essere la normalizzazione
         self.scaling = self.d_k ** -0.5
 
-        #TODO:what is this?
         self.att_shape = "hnij"
 
 
-        #TODO: sono veramente proiezioni?
         self.k_proj = nn.Linear(self.embedding_dim,self.embedding_dim)
         self.v_proj = nn.Linear(self.embedding_dim,self.embedding_dim)
         self.q_proj = nn.Linear(self.embedding_dim,self.embedding_dim)
@@ -438,7 +429,6 @@ class ColumnSelfAttention(nn.Module):
     
 
 
-    #TODO: capire perchè è diverso rispetto alle righe e perchè niente normalizzazione qui
     def b_forward(
         self,
         x,
@@ -479,7 +469,6 @@ class ColumnSelfAttention(nn.Module):
     ):
         n_rows, n_cols, batch_size, embedding_dim = x.size()
         if n_rows == 1:
-            #TODO: perchè da fare?
             # if there is only 1 position, this is equivalent and doesn't break with padding
             attentions_probabilities = torch.ones(
                 self.num_att_heads,
@@ -539,7 +528,7 @@ class ColumnSelfAttention(nn.Module):
 #LAYERNORM
 
 try:
-    from ...normalization import FusedLayerNorm as _FusedLayerNorm
+    from .normalization import FusedLayerNorm as _FusedLayerNorm
 
     class LayerNorm(_FusedLayerNorm):
         @torch.jit.unused
