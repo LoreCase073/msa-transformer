@@ -1,5 +1,5 @@
 # msa-transformer
-Repository for the ***Machine Learning*** course project, involving the use of transformers for the study of MSA for prediction of contact maps.
+Repository for the ***Machine Learning*** course project, involving the use of transformers for the prediction of contact maps using MSAs as input.
 
 This is a simple and personal of **MSA Transformer** [link](http://proceedings.mlr.press/v139/rao21a/rao21a.pdf), using self-attention and techniques like Axial Attention and Tied Attention to reduce the memory cost of the computation.
 
