@@ -10,7 +10,7 @@ TensorLike = TypeVar("TensorLike", np.ndarray, torch.Tensor)
 
 
 class MSADataset(Dataset):
-    #quando viene inizializzato l'oggetto del dataset
+
     def __init__(self, file_csv, npz, max_seq_len, max_pos, padding_idx):
         self.file_csv = pd.read_csv(file_csv)
         self.npz = npz
@@ -23,11 +23,9 @@ class MSADataset(Dataset):
         self.binarize_transf = ContactMapBinarization(8)
         
 
-    #ritorna quanti samples ci sono nel dataset
     def __len__(self):
         return self.file_csv.shape[0]
-
-    #ritorna un sample con un dato indice e trasformazione quando presente 
+ 
     def __getitem__(self, index):
         file = np.load(os.path.join(self.npz, self.file_csv.iloc[index, 1]+'.npz'))
         name = self.file_csv.iloc[index, 1]
@@ -48,7 +46,7 @@ class MSADataset(Dataset):
 class ContactMapBinarization(object):
     def __init__(self, 
         dist, 
-    ): #dimensione della matrice
+    ): 
         self.dist = dist
 
     def __call__(self, dist):
@@ -64,7 +62,7 @@ class ResizeMSA(object):
     def __init__(self,  
         max_seq_len,
         max_pos,
-    ): #dimensione della matrice
+    ): 
         self.max_seq = max_seq_len
         self.max_pos = max_pos
 

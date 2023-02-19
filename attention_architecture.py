@@ -12,18 +12,37 @@ def symmetrize(x):
     return x + x.transpose(-1, -2)
 
 
+
+#LAYERNORM
+
+try:
+    from .normalization import FusedLayerNorm as _FusedLayerNorm
+
+    class LayerNorm(_FusedLayerNorm):
+        @torch.jit.unused
+        def forward(self, x):
+            if not x.is_cuda:
+                return super().forward(x)
+            else:
+                with torch.cuda.device(x.device):
+                    return super().forward(x)
+
+
+except ImportError:
+    from torch.nn import LayerNorm as LayerNorm
+
 class AxialTL(nn.Module):
     """Class that defines the axial transformer layer, the MSA transformer block"""
 
     def __init__(
         self,
-        embedding_dim: int = 768,
-        ffnet_embedding_dim: int = 3072,
-        num_att_heads: int = 8,
-        dropout: float = 0.1,
-        attention_dropout: float = 0.1,
-        activation_dropout: float = 0.1,
-        max_tokens: int = 2**14,
+        embedding_dim: int = 384,
+        ffnet_embedding_dim: int = 768,
+        num_att_heads: int = 12,
+        dropout: float = 0.2,
+        attention_dropout: float = 0.2,
+        activation_dropout: float = 0.2,
+        max_tokens: int = 2**13,
     ) -> None:
         super().__init__()
 
@@ -73,12 +92,11 @@ class AxialTL(nn.Module):
     def forward(
         self,
         x: torch.Tensor,
-        mask: Optional[torch.Tensor] = None,
         padding_mask: Optional[torch.Tensor] = None,
         need_weights: bool = False,
     ):
-        x, row_attention = self.row_attention(x, mask, padding_mask)
-        x, col_attention = self.col_attention(x, mask, padding_mask)
+        x, row_attention = self.row_attention(x, padding_mask)
+        x, col_attention = self.col_attention(x, padding_mask)
         x = self.ffl(x)
 
         if need_weights:
@@ -94,8 +112,8 @@ class FeedForwardNet(nn.Module):
     def __init__(self,
         embedding_dim: int,
         ffn_embedding_dim: int,
-        dropout: float = 0.1,
-        max_tokens: int = 2 ** 14,
+        dropout: float = 0.2,
+        max_tokens: int = 2 ** 13,
     ):
         super().__init__()
         self.embedding_dim = embedding_dim
@@ -113,18 +131,16 @@ class FeedForwardNet(nn.Module):
         return x
     
 
-#TODO: capire cosa sia
 class NormalizedResidualBlock(nn.Module):
     def __init__(self,
         layer: nn.Module,
         embedding_dim: int,
-        dropout: float = 0.1,
+        dropout: float = 0.2,
     ):
         super().__init__()
         self.embedding_dim = embedding_dim
         self.layer = layer
         self.dropout = nn.Dropout(dropout)
-        #TODO: implementare layer normalization
         self.layer_norm = LayerNorm(self.embedding_dim)
 
 
@@ -147,38 +163,6 @@ class NormalizedResidualBlock(nn.Module):
             return x
 
 
-
-###########################################################
-
-#Head for masked language modeling, to be used in the model
-
-class LMHead(nn.Module):
-
-    def __init__(self, embedding_dim, output_dim, weight):
-        super().__init__()
-        self.dense = nn.Linear(embedding_dim, embedding_dim)
-        self.layer_norm = LayerNorm(embedding_dim)
-        self.weight = weight
-        #Parameter class is a tensor to be considered a module parameter, they are added in the parameter lists
-        self.bias = nn.parameter.Parameter(torch.zeros(output_dim))
-        self.gelu = nn.GELU()
-
-    def forward(self, feat):
-        x = self.dense(feat)
-        #qui uso la gelu già implementata, nel paper la reimplementano
-        x = self.gelu(x)
-        x = self.layer_norm(x)
-        # project back to size of vocabulary with bias
-        x = F.linear(x, self.weight) + self.bias
-        return x
-
-
-###########################################################
-
-
-#CPH, simmetrizzazione, apc, calcolo della regressione logistica su features....
-
-
 def apc(x):
     "Perform average product correct, used for contact prediction."
     a1 = x.sum(-1, keepdims=True)
@@ -190,39 +174,20 @@ def apc(x):
     normalized = x - avg
     return normalized
 
-#TODO: capire come funziona
+#Logistic Regression on attention heads
 class ContPredictionHead(nn.Module):
 
     def __init__(self,
         in_feat : int,
-        prepend_bos: bool,
-        append_eos: bool,
         bias = True,
-        eos_idx: Optional[int] = None,
     ):
         super().__init__()
         self.in_feat = in_feat
-        #eos = end of sentence e bos = beginning of sentence
-        self.prepend_bos = prepend_bos
-        self.append_eos = append_eos
-        if self.append_eos and eos_idx is None:
-            raise ValueError("Alphabet with eos tokens present, but no eos tokens were passed.")
-        self.eos_idx = eos_idx
         self.regression = nn.Linear(in_feat, 1, bias)
         self.activation = nn.Sigmoid()
 
-
-    #TODO: capire cosa fa
-    def forward(self, tokens, attentions):
-        #remove eos token attentions
-        if self.append_eos:
-            eos_mask = tokens.ne(self.eos_idx).to(attentions)
-            eos_mask = eos_mask.unsqueeze(1) * eos_mask.unsqueeze(2)
-            attentions = attentions * eos_mask[:, None, None, :, :]
-            attentions = attentions[..., :-1, :-1]
-        #remove cls token attentions
-        if self.prepend_bos:
-            attentions = attentions[..., 1:, 1:]
+    def forward(self, attentions):
+        
         batch_size, layers, heads, seqlen, _ = attentions.size()
         attentions = attentions.view(batch_size, layers * heads, seqlen, seqlen)
 
@@ -249,7 +214,7 @@ class RowSelfAttention(nn.Module):
         embedding_dim,
         num_att_heads,
         dropout,
-        max_tokens: int =2**14,
+        max_tokens: int =2**13,
     ):
         super().__init__()
 
@@ -262,7 +227,7 @@ class RowSelfAttention(nn.Module):
         #d_v dimension of keys and queries
         # // is floor division
         self.d_k = self.embedding_dim // self.num_att_heads
-        #TODO: capire a cosa serve scaling ---> dovrebbe essere la normalizzazione
+
         self.scaling = self.d_k ** -0.5
 
         self.att_shape = "hnij"
@@ -283,7 +248,6 @@ class RowSelfAttention(nn.Module):
     def b_forward(
         self,
         x,
-        mask = None,
         padding_mask = None,
     ):
         n_rows, n_cols, batch_size, embedding_dim = x.size()
@@ -297,7 +261,6 @@ class RowSelfAttention(nn.Module):
             attention_weights = self.compute_attention_weights(
                 x[start : start + max_rows],
                 scaling,
-                mask,
                 padding_mask[:, start : start + max_rows]
                 if padding_mask is not None
                 else None,
@@ -323,7 +286,6 @@ class RowSelfAttention(nn.Module):
         self,
         x,
         scaling: float,
-        mask = None,
         padding_mask = None,
     ):
         n_rows, n_cols, batch_size, embedding_dim = x.size()
@@ -337,13 +299,6 @@ class RowSelfAttention(nn.Module):
             q *= (1 - padding_mask.permute(1, 2, 0).unsqueeze(3).unsqueeze(4).to(q))
 
         attention_weights = torch.einsum(f"rinhd,rjnhd->hnij", q, k)
-
-        if mask is not None:
-            attention_weights = attention_weights.masked_fill(
-                mask[:,0].unsqueeze(0).unsqueeze(2),
-                -10000,
-            )
-        # Mask Size: [B x R x C], Weights Size: [H x B x C x C]
 
         if padding_mask is not None:
             attention_weights = attention_weights.masked_fill(
@@ -374,15 +329,14 @@ class RowSelfAttention(nn.Module):
     def forward(
         self,
         x,
-        mask = None,
         padding_mask = None,
     ):
         n_rows, n_cols, batch_size, embedding_dim = x.size()
         if (n_rows*n_cols > self.max_tokens) and not torch.is_grad_enabled():
-            return self.b_forward(x, mask, padding_mask)
+            return self.b_forward(x, padding_mask)
         else:
             scaling = self.align_scaling(x)
-            attention_weights = self.compute_attention_weights(x, scaling, mask, padding_mask)
+            attention_weights = self.compute_attention_weights(x, scaling, padding_mask)
             attention_probabilities = attention_weights.softmax(-1)
             attention_probabilities = self.dropout(attention_probabilities)
             output = self.update_attention_weights(x, attention_probabilities)
@@ -397,8 +351,8 @@ class ColumnSelfAttention(nn.Module):
     def __init__(self,
         embedding_dim,
         num_att_heads,
-        dropout = 0.1,
-        max_tokens: int =2**14,
+        dropout = 0.2,
+        max_tokens: int =2**13,
     ):
         super().__init__()
 
@@ -411,7 +365,6 @@ class ColumnSelfAttention(nn.Module):
         #d_v dimension of keys and queries
         # // is floor division
         self.d_k = self.embedding_dim // self.num_att_heads
-        #TODO: capire a cosa serve scaling ---> dovrebbe essere la normalizzazione
         self.scaling = self.d_k ** -0.5
 
         self.att_shape = "hnij"
@@ -432,7 +385,6 @@ class ColumnSelfAttention(nn.Module):
     def b_forward(
         self,
         x,
-        mask = None,
         padding_mask = None,
     ):
         n_rows, n_cols, batch_size, embedding_dim = x.size()
@@ -446,7 +398,6 @@ class ColumnSelfAttention(nn.Module):
         for start in range(0, n_cols, max_cols):
             output, attention = self(
                 x[:,start : start + max_cols],
-                mask,
                 padding_mask[:, :, start : start + max_cols]
                 if padding_mask is not None
                 else None,
@@ -464,7 +415,6 @@ class ColumnSelfAttention(nn.Module):
     def update_attention(
         self,
         x,
-        mask,
         padding_mask
     ):
         n_rows, n_cols, batch_size, embedding_dim = x.size()
@@ -487,11 +437,7 @@ class ColumnSelfAttention(nn.Module):
             q *= self.scaling
 
             attention_weights = torch.einsum("icnhd,jcnhd->hcnij", q, k)
-            if mask is not None:
-                attention_weights = attention_weights.masked_fill(
-                mask.permute(2,0,1).unsqueeze(0).unsqueeze(3),
-                -10000,
-            )
+            
             if padding_mask is not None:
                 attention_weights = attention_weights.masked_fill(
                     padding_mask.permute(2,0,1).unsqueeze(0).unsqueeze(3),
@@ -508,7 +454,6 @@ class ColumnSelfAttention(nn.Module):
     def forward(
         self,
         x,
-        mask = None,
         padding_mask = None,
     ):
         n_rows, n_cols, batch_size, embedding_dim = x.size()
@@ -516,29 +461,9 @@ class ColumnSelfAttention(nn.Module):
         if (n_rows * n_cols) > self.max_tokens and not torch.is_grad_enabled():
             return self.b_forward(
                 x,
-                mask,
                 padding_mask
             )
         else:
-            return self.update_attention(x, mask, padding_mask)
+            return self.update_attention(x, padding_mask)
 
 
-
-
-#LAYERNORM
-
-try:
-    from .normalization import FusedLayerNorm as _FusedLayerNorm
-
-    class LayerNorm(_FusedLayerNorm):
-        @torch.jit.unused
-        def forward(self, x):
-            if not x.is_cuda:
-                return super().forward(x)
-            else:
-                with torch.cuda.device(x.device):
-                    return super().forward(x)
-
-
-except ImportError:
-    from torch.nn import LayerNorm as LayerNorm

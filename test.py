@@ -4,14 +4,14 @@ from torch.utils.data import DataLoader
 import torch.optim as optim
 import torch.nn.functional as F
 import os
-from model_final import MSATransf
+from model import MSATransf
 from tqdm import tqdm
 import time
 import argparse
-from dataset_final import MSADataset, collate_tensors
+from dataset import MSADataset, collate_tensors
 import json
 import numpy as np
-from precision_final import precision
+from precision import precision
 import torch.nn as nn
 import os
 import csv
@@ -59,7 +59,6 @@ if __name__== '__main__':
                         help="Name of the pretraining architecture used")
 
 
-    #parser = MSATransfNoCol.args(parser)
     parser = MSATransf.args(parser)
 
     args = parser.parse_args()

@@ -26,8 +26,6 @@ import torch
 from tqdm import tqdm
 import pandas as pd
 
-#https://github.com/facebookresearch/esm/blob/982c3f69478f141de60a6fa35fff2880793141ce/examples/contact_prediction.ipynb
-
 
 def compute_precisions(
     predictions: torch.Tensor,
@@ -115,8 +113,6 @@ def precision(
     if isinstance(targets, np.ndarray):
         targets = torch.from_numpy(targets)
     contact_ranges = [
-        #("local", 3, 6),
-        #("short", 6, 12),
         ("MLR", 12, None),
         ("LR", 24, None),
     ]

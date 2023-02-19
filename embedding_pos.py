@@ -1,10 +1,7 @@
 import math
 from turtle import forward
 from typing import Optional
-from sympy import symmetrize
 import torch
-from torch import embedding
-from torch import narrow
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -27,7 +24,6 @@ class PositionalEmbedding(nn.Embedding):
             raise ValueError(f"Sequence too long!"
             f"Maximum sequence length of {self.max_pos}")
         #Computes if input != other element-wise
-        #Calcola element-wise not equal!
         mask = input.ne(self.padding_idx).int()
         positions = (torch.cumsum(mask, dim=1).type_as(mask)*mask).long() + self.padding_idx
         return F.embedding(
